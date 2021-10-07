@@ -21,21 +21,22 @@ var (
 	defaultCache *CacheFile
 
 	bucketSelected = []byte("selected")
+	bucketFakeip   = []byte("fakeip")
 )
 
 // CacheFile store and update the cache file
 type CacheFile struct {
-	db *bolt.DB
+	DB *bolt.DB
 }
 
 func (c *CacheFile) SetSelected(group, selected string) {
 	if !profile.StoreSelected.Load() {
 		return
-	} else if c.db == nil {
+	} else if c.DB == nil {
 		return
 	}
 
-	err := c.db.Batch(func(t *bolt.Tx) error {
+	err := c.DB.Batch(func(t *bolt.Tx) error {
 		bucket, err := t.CreateBucketIfNotExists(bucketSelected)
 		if err != nil {
 			return err
@@ -44,7 +45,7 @@ func (c *CacheFile) SetSelected(group, selected string) {
 	})
 
 	if err != nil {
-		log.Warnln("[CacheFile] write cache to %s failed: %s", c.db.Path(), err.Error())
+		log.Warnln("[CacheFile] write cache to %s failed: %s", c.DB.Path(), err.Error())
 		return
 	}
 }
@@ -52,12 +53,12 @@ func (c *CacheFile) SetSelected(group, selected string) {
 func (c *CacheFile) SelectedMap() map[string]string {
 	if !profile.StoreSelected.Load() {
 		return nil
-	} else if c.db == nil {
+	} else if c.DB == nil {
 		return nil
 	}
 
 	mapping := map[string]string{}
-	c.db.View(func(t *bolt.Tx) error {
+	c.DB.View(func(t *bolt.Tx) error {
 		bucket := t.Bucket(bucketSelected)
 		if bucket == nil {
 			return nil
@@ -72,8 +73,47 @@ func (c *CacheFile) SelectedMap() map[string]string {
 	return mapping
 }
 
+func (c *CacheFile) PutFakeip(key, value []byte) error {
+	if c.DB == nil {
+		return nil
+	}
+
+	err := c.DB.Batch(func(t *bolt.Tx) error {
+		bucket, err := t.CreateBucketIfNotExists(bucketFakeip)
+		if err != nil {
+			return err
+		}
+		return bucket.Put(key, value)
+	})
+
+	if err != nil {
+		log.Warnln("[CacheFile] write cache to %s failed: %s", c.DB.Path(), err.Error())
+	}
+
+	return err
+}
+
+func (c *CacheFile) GetFakeip(key []byte) []byte {
+	if c.DB == nil {
+		return nil
+	}
+
+	tx, err := c.DB.Begin(false)
+	if err != nil {
+		return nil
+	}
+	defer tx.Rollback()
+
+	bucket := tx.Bucket(bucketFakeip)
+	if bucket == nil {
+		return nil
+	}
+
+	return bucket.Get(key)
+}
+
 func (c *CacheFile) Close() error {
-	return c.db.Close()
+	return c.DB.Close()
 }
 
 // TODO: remove migrateCache until 2022
@@ -84,7 +124,7 @@ func migrateCache() {
 			log.Warnln("[CacheFile] can't open cache file: %s", err.Error())
 		}
 		defaultCache = &CacheFile{
-			db: db,
+			DB: db,
 		}
 	}()
 
