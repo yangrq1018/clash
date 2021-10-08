@@ -13,47 +13,48 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-func createPools(options Options) ([]*Pool, error) {
+func createPools(options Options) ([]*Pool, string, error) {
 	pool, err := New(options)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	filePool, err := createCachefileStore(options)
+	filePool, tempfile, err := createCachefileStore(options)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
-	return []*Pool{pool, filePool}, nil
+	return []*Pool{pool, filePool}, tempfile, nil
 }
 
-func createCachefileStore(options Options) (*Pool, error) {
+func createCachefileStore(options Options) (*Pool, string, error) {
 	pool, err := New(options)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	f, err := os.CreateTemp("", "clash")
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	db, err := bolt.Open(f.Name(), 0666, &bolt.Options{Timeout: time.Second})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	pool.store = &cachefileStore{
 		cache: &cachefile.CacheFile{DB: db},
 	}
-	return pool, nil
+	return pool, f.Name(), nil
 }
 
 func TestPool_Basic(t *testing.T) {
 	_, ipnet, _ := net.ParseCIDR("192.168.0.1/29")
-	pools, err := createPools(Options{
+	pools, tempfile, err := createPools(Options{
 		IPNet: ipnet,
 		Size:  10,
 	})
 	assert.Nil(t, err)
+	defer os.Remove(tempfile)
 
 	for _, pool := range pools {
 		first := pool.Lookup("foo.com")
@@ -75,11 +76,12 @@ func TestPool_Basic(t *testing.T) {
 
 func TestPool_CycleUsed(t *testing.T) {
 	_, ipnet, _ := net.ParseCIDR("192.168.0.1/30")
-	pools, err := createPools(Options{
+	pools, tempfile, err := createPools(Options{
 		IPNet: ipnet,
 		Size:  10,
 	})
 	assert.Nil(t, err)
+	defer os.Remove(tempfile)
 
 	for _, pool := range pools {
 		first := pool.Lookup("foo.com")
@@ -92,12 +94,13 @@ func TestPool_Skip(t *testing.T) {
 	_, ipnet, _ := net.ParseCIDR("192.168.0.1/30")
 	tree := trie.New()
 	tree.Insert("example.com", tree)
-	pools, err := createPools(Options{
+	pools, tempfile, err := createPools(Options{
 		IPNet: ipnet,
 		Size:  10,
 		Host:  tree,
 	})
 	assert.Nil(t, err)
+	defer os.Remove(tempfile)
 
 	for _, pool := range pools {
 		assert.True(t, pool.ShouldSkipped("example.com"))
